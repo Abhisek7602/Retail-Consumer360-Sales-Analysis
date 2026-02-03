@@ -1,0 +1,228 @@
+
+
+-- =========================================================
+-- RETAIL DATA WAREHOUSE STAR SCHEMA CREATION SCRIPT
+-- =========================================================
+
+-- -------------------------------
+-- STEP 1: Check Source Table
+-- -------------------------------
+SELECT * 
+FROM retail_cus.retail_final_mainclean;
+
+
+-- -------------------------------
+-- STEP 2: Disable Safe Update Mode
+-- -------------------------------
+SET SQL_SAFE_UPDATES = 0;
+
+
+-- -------------------------------
+-- STEP 3: Clean Price Column (Remove $ Symbol)
+-- -------------------------------
+UPDATE retail_final_mainclean
+SET Price = REPLACE(Price, '$', '');
+
+
+-- -------------------------------
+-- STEP 4: Convert Price Column To Numeric
+-- -------------------------------
+ALTER TABLE retail_final_mainclean
+MODIFY Price DECIMAL(10,2);
+
+
+-- -------------------------------
+-- STEP 5: Add Revenue Column (Auto Calculated)
+-- -------------------------------
+ALTER TABLE retail_final_mainclean
+ADD COLUMN Revenue DECIMAL(12,2)
+GENERATED ALWAYS AS (Quantity * Price) STORED
+AFTER Price;
+
+
+-- -------------------------------
+-- STEP 6: Convert InvoiceDate To DATETIME Format
+-- -------------------------------
+UPDATE retail_final_mainclean
+SET InvoiceDate = STR_TO_DATE(InvoiceDate, '%d-%m-%Y %H:%i');
+
+ALTER TABLE retail_final_mainclean
+MODIFY InvoiceDate DATETIME;
+
+
+-- -------------------------------
+-- STEP 7: Create Customer Summary View (RFM Base)
+-- -------------------------------
+CREATE OR REPLACE VIEW customer_summary AS
+SELECT
+    `Customer ID` AS CustomerID,
+    MAX(InvoiceDate) AS last_purchase_date,
+    COUNT(DISTINCT Invoice) AS frequency,
+    SUM(Revenue) AS monetary
+FROM retail_final_mainclean
+WHERE `Customer ID` IS NOT NULL
+GROUP BY `Customer ID`;
+
+
+-- -------------------------------
+-- STEP 8: Create Customer Dimension Table
+-- -------------------------------
+DROP TABLE IF EXISTS dim_customer;
+
+CREATE TABLE dim_customer (
+    customer_key INT PRIMARY KEY,
+    country VARCHAR(50)
+);
+
+
+-- -------------------------------
+-- STEP 9: Load Customer Dimension
+-- -------------------------------
+INSERT INTO dim_customer
+SELECT DISTINCT
+    `Customer ID`,
+    Country
+FROM retail_final_mainclean
+WHERE `Customer ID` IS NOT NULL;
+
+
+-- -------------------------------
+-- STEP 10: Create Product Dimension Table
+-- -------------------------------
+DROP TABLE IF EXISTS dim_product;
+
+CREATE TABLE dim_product (
+    product_key VARCHAR(20) PRIMARY KEY,
+    product_name VARCHAR(255)
+);
+
+
+-- -------------------------------
+-- STEP 11: Load Product Dimension
+-- -------------------------------
+INSERT INTO dim_product
+SELECT
+    StockCode,
+    MAX(Description)
+FROM retail_final_mainclean
+GROUP BY StockCode;
+
+
+-- -------------------------------
+-- STEP 12: Create Date Dimension Table
+-- -------------------------------
+DROP TABLE IF EXISTS dim_date;
+
+CREATE TABLE dim_date (
+    date_key DATETIME PRIMARY KEY,
+    year INT,
+    month INT,
+    day INT,
+    quarter INT
+);
+
+
+-- -------------------------------
+-- STEP 13: Load Date Dimension
+-- -------------------------------
+INSERT INTO dim_date
+SELECT DISTINCT
+    InvoiceDate,
+    YEAR(InvoiceDate),
+    MONTH(InvoiceDate),
+    DAY(InvoiceDate),
+    QUARTER(InvoiceDate)
+FROM retail_final_mainclean
+WHERE InvoiceDate IS NOT NULL;
+
+
+-- -------------------------------
+-- STEP 14: Create Country Dimension (Optional)
+-- -------------------------------
+DROP TABLE IF EXISTS dim_country;
+
+CREATE TABLE dim_country (
+    country_key INT AUTO_INCREMENT PRIMARY KEY,
+    country_name VARCHAR(50)
+);
+
+
+-- -------------------------------
+-- STEP 15: Load Country Dimension
+-- -------------------------------
+INSERT INTO dim_country (country_name)
+SELECT DISTINCT Country
+FROM retail_final_mainclean
+WHERE Country IS NOT NULL;
+
+
+-- -------------------------------
+-- STEP 16: Create FACT SALES Table
+-- -------------------------------
+DROP TABLE IF EXISTS fact_sales;
+
+CREATE TABLE fact_sales (
+    sales_id INT AUTO_INCREMENT PRIMARY KEY,
+
+    invoice_no VARCHAR(20),
+
+    customer_key INT,
+    product_key VARCHAR(20),
+    date_key DATETIME,
+
+    quantity INT,
+    price DECIMAL(10,2),
+    revenue DECIMAL(12,2),
+
+    FOREIGN KEY (customer_key) REFERENCES dim_customer(customer_key),
+    FOREIGN KEY (product_key) REFERENCES dim_product(product_key),
+    FOREIGN KEY (date_key) REFERENCES dim_date(date_key)
+);
+
+
+-- -------------------------------
+-- STEP 17: Load Fact Sales Table
+-- -------------------------------
+INSERT INTO fact_sales
+(
+ invoice_no,
+ customer_key,
+ product_key,
+ date_key,
+ quantity,
+ price,
+ revenue
+)
+
+SELECT
+ Invoice,
+ `Customer ID`,
+ StockCode,
+ InvoiceDate,
+ Quantity,
+ Price,
+ Revenue
+FROM retail_final_mainclean
+WHERE Quantity > 0
+AND `Customer ID` IS NOT NULL
+AND InvoiceDate IS NOT NULL;
+
+
+-- -------------------------------
+-- STEP 18: Validate Data Load
+-- -------------------------------
+SELECT COUNT(*) AS total_fact_rows 
+FROM fact_sales;
+
+
+-- -------------------------------
+-- STEP 19: Sample Business Query
+-- -------------------------------
+SELECT
+ c.country,
+ SUM(f.revenue) AS total_revenue
+FROM fact_sales f
+JOIN dim_customer c
+ON f.customer_key = c.customer_key
+GROUP BY c.country
+ORDER BY total_revenue DESC;
