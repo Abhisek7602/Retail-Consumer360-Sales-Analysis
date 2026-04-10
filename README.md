@@ -592,9 +592,3 @@ rules.to_csv("Rules.csv", index=False)
 
 ---
 
-## Author - Abhisek Nayak
-
-This project is part of my portfolio, showcasing the SQL, Python, and Power BI skills essential for data analyst roles. If you have any questions, feedback, or would like to collaborate, feel free to get in touch.
-
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/abhisek-nayak-88054a362/)
-
